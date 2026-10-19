@@ -4,13 +4,37 @@ import sys
 
 import requests
 
-from wakey_agent.client import ToolCall, get_headers, get_payload, load_config, parse_stream
+from wakey_agent.client import (
+    AssistantMessage,
+    TextMessage,
+    WakeyError,
+    chat,
+    get_headers,
+    get_payload,
+    load_config,
+)
+
+WEATHER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get the current temperature in a city",
+        "parameters": {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        },
+    },
+}
+
+
+QUESTION: TextMessage = {"role": "user", "content": "What is the weather in Tokyo?"}
 
 
 def check_one(url: str, api_key: str, model: str, stream=False) -> requests.Response:
     return requests.post(
         f"{url}/v1/chat/completions",
-        json=get_payload(model, stream),
+        json=get_payload(model, [QUESTION], [WEATHER_TOOL], stream),
         headers=get_headers(api_key),
         timeout=(5, 120),
         stream=stream,
@@ -20,7 +44,7 @@ def check_one(url: str, api_key: str, model: str, stream=False) -> requests.Resp
 def check_two(url: str, api_key: str, resp, model, stream=False):
     msg = resp["choices"][0]["message"]
     call = msg["tool_calls"][0]
-    payload = get_payload(model, stream)
+    payload = get_payload(model, [QUESTION], [WEATHER_TOOL], stream)
     payload["messages"].append(msg)
     payload["messages"].append(
         {
@@ -34,11 +58,9 @@ def check_two(url: str, api_key: str, resp, model, stream=False):
     )
 
 
-def check_three(url: str, api_key: str, model: str) -> tuple[dict[int, ToolCall], str | None]:
-    with check_one(url, api_key, model, stream=True) as r3:
-        r3.raise_for_status()
-        lines = (raw.decode("utf-8") for raw in r3.iter_lines())
-        return parse_stream(lines)
+def check_three(url: str, api_key: str, model: str) -> tuple[AssistantMessage, str | None]:
+    message, finish = chat(url, api_key, model, [QUESTION], [WEATHER_TOOL])
+    return message, finish
 
 
 def is_nonempty_str(x: object) -> bool:
@@ -110,24 +132,17 @@ def verify_check_two(r: requests.Response) -> CheckResult:
     return True, ""
 
 
-def verify_check_three(calls: dict[int, ToolCall], finish_reason: str | None) -> CheckResult:
+def verify_check_three(message: AssistantMessage, finish_reason: str | None) -> CheckResult:
     try:
         if finish_reason != "tool_calls":
             return False, f"finish reason: {finish_reason!r}; expected 'tool_calls'"
-        if len(calls) != 1:
-            return False, f"expected 1 call, got {len(calls)}"
-        call = calls.get(0)
-        if call is None:
-            return False, f"expected call at index 0, got index {list(calls)}"
-        if call["id"] is None:
-            return False, "no 'id' in 'calls'"
-        ok, reason = verify_call(call["name"], call["arguments"])
-        if not ok:
-            return False, reason
+        tool_calls = message.get("tool_calls", [])
+        if len(tool_calls) != 1:
+            return False, f"expected 1 call, got {len(tool_calls)}"
+        call = tool_calls[0]
+        return verify_call(call["function"]["name"], call["function"]["arguments"])
     except Exception as e:
         return False, repr(e)
-
-    return True, ""
 
 
 def run_check_one(url: str, api_key: str, model: str) -> tuple[bool, str, requests.Response | None]:
@@ -151,7 +166,7 @@ def run_check_two(url: str, api_key: str, resp, model: str) -> tuple[bool, str]:
 def run_check_three(url: str, api_key: str, model: str) -> tuple[bool, str]:
     try:
         calls, finish_reason = check_three(url, api_key, model)
-    except requests.RequestException as e:
+    except (requests.RequestException, WakeyError) as e:
         return False, f"request failed: {e!r}"
     except (ValueError, KeyError, IndexError) as e:
         return False, f"malformed stream: {e!r}"
