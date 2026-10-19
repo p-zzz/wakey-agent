@@ -1,5 +1,8 @@
+import json
 import os
 import subprocess
+
+from wakey_agent.client import ToolCallMessage
 
 
 def build_argv(command: str, workspace: str) -> list[str]:
@@ -111,12 +114,51 @@ TOOLS = {
 }
 
 
+def execute_tool_call(call: ToolCallMessage, workspace: str) -> str:
+    name = call["function"]["name"]
+    raw_args = call["function"]["arguments"]
+
+    if name not in TOOLS:
+        return f"Error: unknown tool {name!r}"
+    _, tool_func = TOOLS[name]
+
+    try:
+        args = json.loads(raw_args)
+    except json.JSONDecodeError:
+        return f"Error: arguments are not valid JSON: {raw_args!r}"
+    if not isinstance(args, dict):
+        return f"Error: arguments must be a JSON object, got {type(args).__name__}"
+
+    try:
+        return tool_func(**args, workspace=workspace)
+    except TypeError as e:
+        return f"Error: bad arguments for {name}: {e}"
+
+
+def make_call(name: str, arguments: str) -> ToolCallMessage:
+    return {
+        "id": "test",
+        "type": "function",
+        "function": {"name": name, "arguments": arguments},
+    }
+
+
 def main():
     workspace = "~/throwaway"
     workspace = os.path.expanduser(workspace)
-    print(read_file("test.txt", workspace))
-    print(write_file("ass.txt", "ass is too big !", workspace))
-    print(run_shell("ls -l", workspace))
+
+    cases = [
+        make_call("read_file", json.dumps({"path": "test.txt"})),
+        make_call("scratch_head", json.dumps({"path": "test.txt"})),
+        make_call("read_file", "{path: test.txt"),
+        make_call("read_file", json.dumps(["test.txt"])),
+        make_call("read_file", json.dumps({})),
+        make_call("read_file", json.dumps({"path": "test.txt", "workspace": "/"})),
+        make_call("read_file", json.dumps({"file": "test.txt"})),
+    ]
+
+    for call in cases:
+        print(call["function"], "->", execute_tool_call(call, workspace))
 
 
 if __name__ == "__main__":
