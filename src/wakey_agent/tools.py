@@ -39,8 +39,9 @@ WRITE_FILE_SCHEMA = {
     "type": "function",
     "function": {
         "name": "write_file",
-        "description": "Write to a file from the workspace, create it if it doesn't exist and "
-        "return bytes written. Paths are relative to the workspace root.",
+        "description": "Overwrite to an file from the workspace, or create and write to it if it "
+        "doesn't exist and return number of bytes written. Paths are relative to the "
+        "workspace root.",
         "parameters": {
             "type": "object",
             "properties": {
