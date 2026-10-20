@@ -1,11 +1,12 @@
 import argparse
 import os
 import sys
+import time
 
 import requests
 
 from wakey_agent.client import Message, WakeyError, chat, load_config
-from wakey_agent.tools import TOOLS, execute_tool_call
+from wakey_agent.tools import TOOLS, execute_tool_call, log_entry, new_log_file
 
 SYSTEM_PROMPT: str = (
     "You're an agent working in a workspace directory, "
@@ -32,6 +33,8 @@ def run_agent(url: str, api_key: str, max_steps: int, model: str, task: str, wor
         {"role": "user", "content": task},
     ]
 
+    log_path = new_log_file()
+
     for step in range(1, max_steps + 1):
         print(f"--- step {step}/{max_steps}")
 
@@ -46,12 +49,28 @@ def run_agent(url: str, api_key: str, max_steps: int, model: str, task: str, wor
             return message["content"]
 
         for call in message["tool_calls"]:
-            result = execute_tool_call(call, workspace)
-            messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
             name = call["function"]["name"]
             raw_args = call["function"]["arguments"]
-            print(f"→ {name}({raw_args})")
+            print(f"→ {name}({raw_args[:80]})")
+
+            result = execute_tool_call(call, workspace)
             print(preview(result))
+
+            try:
+                log_entry(
+                    log_path,
+                    {
+                        "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "step": step,
+                        "tool": name,
+                        "args": raw_args,
+                        "result": result,
+                    },
+                )
+            except OSError as e:
+                print(f"Error: {e.strerror}: {log_path}", file=sys.stderr)
+
+            messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
 
     print("Max steps reached", file=sys.stderr)
 

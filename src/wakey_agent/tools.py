@@ -1,7 +1,10 @@
 import json
 import os
 import subprocess
+import sys
+import time
 from pathlib import Path
+from typing import Any
 
 from wakey_agent.client import ToolCallMessage
 
@@ -42,6 +45,36 @@ def resolve_path(path: str, workspace: str) -> Path:
     if not target.is_relative_to(ws):
         raise ValueError(f"path {path!r} is outside the workspace")
     return target
+
+
+LOG_DIR = Path("~/.local/state/wakey-agent/").expanduser()
+LOG_RETENTION_DAYS = 7
+
+
+def cleanup_logs() -> None:
+    """Cleanup logs that are over LOG_RETENTION_DAYS old"""
+    cutoff = time.time() - LOG_RETENTION_DAYS * 24 * 3600
+    for p in LOG_DIR.glob("*.jsonl"):
+        try:
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+        except OSError as e:
+            print(f"Warning: could not delete old log {e}", file=sys.stderr)
+
+
+def new_log_file() -> Path:
+    """Create the log directory and an empty, private log file for this run"""
+    LOG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    cleanup_logs()
+    log_path = LOG_DIR / f"{time.strftime('%Y-%m-%dT%H-%M-%S')}.jsonl"
+    log_path.touch(mode=0o600)
+    return log_path
+
+
+def log_entry(log_path: Path, entry: dict[str, Any]) -> None:
+    """Append one JSON object as a line"""
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
 
 
 READ_FILE_SCHEMA = {
