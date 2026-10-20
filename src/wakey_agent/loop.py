@@ -26,7 +26,15 @@ def preview(text: str, max_lines: int = 3) -> str:
     return shown
 
 
-def run_agent(url: str, api_key: str, max_steps: int, model: str, task: str, workspace: str):
+def run_agent(
+    url: str,
+    api_key: str,
+    max_steps: int,
+    model: str,
+    task: str,
+    auto_approve: bool,
+    workspace: str,
+):
     tools = [schema for schema, _ in TOOLS.values()]
     messages: list[Message] = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -53,7 +61,7 @@ def run_agent(url: str, api_key: str, max_steps: int, model: str, task: str, wor
             raw_args = call["function"]["arguments"]
             print(f"→ {name}({raw_args[:80]})")
 
-            result = execute_tool_call(call, workspace)
+            result = execute_tool_call(call, workspace, auto_approve)
             print(preview(result))
 
             try:
@@ -80,8 +88,13 @@ def main():
     parser.add_argument(
         "--max-steps", type=int, default=20, help="Maximum amount of model calls (default: 20)"
     )
-    parser.add_argument("--model", default="gemma-4-12b", help="model name to request")
+    parser.add_argument("--model", type=str, default="gemma-4-12b", help="model name to request")
     parser.add_argument("--task", type=str, default="", help="User defined task for the model")
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="run shell commands without asking for confirmation",
+    )
     parser.add_argument(
         "--workspace", type=str, default="~/throwaway", help="User defined workspace folder"
     )
@@ -90,7 +103,13 @@ def main():
     url, api_key = load_config()
 
     run_agent(
-        url, api_key, args.max_steps, args.model, args.task, os.path.expanduser(args.workspace)
+        url,
+        api_key,
+        args.max_steps,
+        args.model,
+        args.task,
+        args.yes,
+        os.path.expanduser(args.workspace),
     )
 
 

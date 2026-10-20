@@ -158,6 +158,9 @@ def test_execute_valid_call(ws: Path) -> None:
         make_call("read_file", {"file": "hello.c"}),  # wrong argument name
         make_call("read_file", {"path": "hello.c", "workspace": "/"}),  # tries to set workspace
         make_call("", {}),  # empty name (stream sent no name)
+        make_call(
+            "run_shell", {"command": "true", "auto_approve": True}
+        ),  # model tries to skip the prompt
     ],
 )
 def test_execute_bad_calls_return_errors(ws: Path, call: ToolCallMessage) -> None:

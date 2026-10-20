@@ -154,24 +154,24 @@ RUN_SHELL_SCHEMA = {
 }
 
 
-def run_shell(command: str, workspace: str) -> str:
-    ans = input(f"Run '{command}'? [y/N]: ")
-    if ans.lower() in ("y", "yes"):
-        try:
-            res = subprocess.run(
-                args=build_argv(command, workspace),
-                cwd=workspace,
-                capture_output=True,
-                timeout=60,
-                text=True,
-                stdin=subprocess.DEVNULL,
-            )
-            return f"exit code: {res.returncode}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
-        except (subprocess.TimeoutExpired, OSError) as e:
-            return f"Error: {e}"
+def run_shell(command: str, workspace: str, auto_approve=False) -> str:
+    if not auto_approve:
+        ans = input(f"Run '{command}'? [y/N]: ")
+        if ans.lower() not in ("y", "yes"):
+            return "User declined to run this command"
 
-    else:
-        return "User declined to run this command"
+    try:
+        res = subprocess.run(
+            args=build_argv(command, workspace),
+            cwd=workspace,
+            capture_output=True,
+            timeout=60,
+            text=True,
+            stdin=subprocess.DEVNULL,
+        )
+        return f"exit code: {res.returncode}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return f"Error: {e}"
 
 
 TOOLS = {
@@ -181,9 +181,13 @@ TOOLS = {
 }
 
 
-def execute_tool_call(call: ToolCallMessage, workspace: str) -> str:
+def execute_tool_call(call: ToolCallMessage, workspace: str, auto_approve: bool = False) -> str:
     name = call["function"]["name"]
     raw_args = call["function"]["arguments"]
+    kwargs: dict[str, str | bool] = {"workspace": workspace}
+
+    if name == "run_shell":
+        kwargs["auto_approve"] = auto_approve
 
     if name not in TOOLS:
         return f"Error: unknown tool {name!r}"
@@ -197,7 +201,7 @@ def execute_tool_call(call: ToolCallMessage, workspace: str) -> str:
         return f"Error: arguments must be a JSON object, got {type(args).__name__}"
 
     try:
-        return tool_func(**args, workspace=workspace)
+        return tool_func(**args, **kwargs)
     except TypeError as e:
         return f"Error: bad arguments for {name}: {e}"
 
