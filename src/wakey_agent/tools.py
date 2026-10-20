@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+from pathlib import Path
 
 from wakey_agent.client import ToolCallMessage
 
@@ -34,6 +35,15 @@ def build_argv(command: str, workspace: str) -> list[str]:
     ]
 # fmt: on
 
+
+def resolve_path(path: str, workspace: str) -> Path:
+    ws = Path(workspace).resolve()
+    target = (ws / path).resolve()
+    if not target.is_relative_to(ws):
+        raise ValueError(f"path {path!r} is outside the workspace")
+    return target
+
+
 READ_FILE_SCHEMA = {
     "type": "function",
     "function": {
@@ -52,15 +62,14 @@ READ_FILE_SCHEMA = {
 
 
 def read_file(path: str, workspace: str) -> str:
-    if os.path.isabs(path):
-        return "Error: paths must be relative to the workspace"
-
     try:
-        with open(os.path.join(workspace, path)) as f:
-            data = f.read()
-            return data
-    except (OSError, UnicodeDecodeError) as e:
+        return resolve_path(path, workspace).read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return f"Error: {path} is not a UTF-8 text file (binary?)"
+    except ValueError as e:
         return f"Error: {e}"
+    except OSError as e:
+        return f"Error: {e.strerror}: {path}"
 
 
 WRITE_FILE_SCHEMA = {
@@ -83,17 +92,16 @@ WRITE_FILE_SCHEMA = {
 
 
 def write_file(path: str, content: str, workspace: str) -> str:
-    if os.path.isabs(path):
-        return "Error: paths must be relative to the workspace"
-
     try:
-        if os.path.dirname(path) != "":
-            os.makedirs(os.path.dirname(os.path.join(workspace, path)), exist_ok=True)
-        with open(os.path.join(workspace, path), "w") as f:
+        target: Path = resolve_path(path, workspace)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "w") as f:
             f.write(content)
         return f"Wrote {len(content.encode('utf-8'))} bytes to {path}"
-    except (OSError, UnicodeDecodeError) as e:
+    except ValueError as e:
         return f"Error: {e}"
+    except OSError as e:
+        return f"Error: {e.strerror}: {path}"
 
 
 RUN_SHELL_SCHEMA = {
@@ -181,6 +189,14 @@ def main():
         make_call("read_file", json.dumps({})),
         make_call("read_file", json.dumps({"path": "test.txt", "workspace": "/"})),
         make_call("read_file", json.dumps({"file": "test.txt"})),
+        # escape cases
+        make_call("read_file", json.dumps({"path": "../.bashrc"})),
+        make_call("read_file", json.dumps({"path": "/etc/passwd"})),
+        make_call("read_file", json.dumps({"path": "../throwaway2/x"})),
+        make_call("read_file", json.dumps({"path": "root/etc/passwd"})),
+        make_call("read_file", json.dumps({"path": "alias.c"})),
+        make_call("write_file", json.dumps({"path": "../escape.txt", "content": "x"})),
+        make_call("write_file", json.dumps({"path": "root/tmp/escape.txt", "content": "x"})),
     ]
 
     for call in cases:
