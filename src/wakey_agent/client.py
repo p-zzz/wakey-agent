@@ -83,12 +83,14 @@ def load_config(path: str = "~/.config/wakey/client.json") -> tuple[str, str]:
 
 
 def get_headers(api_key: str) -> dict[str, str]:
+    """Builds headers for request"""
     return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
 
 def get_payload(
     model: str, messages: list[Message], tools: list[dict[str, Any]], stream: bool
 ) -> dict[str, Any]:
+    """Builds payload for request"""
     return {"model": model, "stream": stream, "messages": messages, "tools": tools}
 
 

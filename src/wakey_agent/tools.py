@@ -5,9 +5,34 @@ import subprocess
 from wakey_agent.client import ToolCallMessage
 
 
+# fmt: off
 def build_argv(command: str, workspace: str) -> list[str]:
-    return ["bash", "-c", command]
-
+    """Wrap a shell command in a bubblewrap sandbox rooted at the workspace."""
+    return [
+        "bwrap",
+        # system files: read-only
+        "--ro-bind", "/usr", "/usr",
+        "--symlink", "usr/bin", "/bin",
+        "--symlink", "usr/lib", "/lib",
+        "--symlink", "usr/lib", "/lib64",
+        "--proc", "/proc",
+        "--dev", "/dev",
+        "--tmpfs", "/tmp",
+        # the only writable place, at a neutral path
+        "--bind", workspace, "/workspace",
+        "--chdir", "/workspace",
+        # clean environment: nothing inherited from the user's shell
+        "--clearenv",
+        "--setenv", "PATH", "/usr/bin",
+        "--setenv", "HOME", "/workspace",
+        "--setenv", "LANG", "C.UTF-8",
+        # isolation: no network, own PIDs, own session
+        "--unshare-all",
+        "--new-session",
+        "--die-with-parent",
+        "bash", "-c", command,
+    ]
+# fmt: on
 
 READ_FILE_SCHEMA = {
     "type": "function",
@@ -98,6 +123,7 @@ def run_shell(command: str, workspace: str) -> str:
                 capture_output=True,
                 timeout=60,
                 text=True,
+                stdin=subprocess.DEVNULL,
             )
             return f"exit code: {res.returncode}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
         except (subprocess.TimeoutExpired, OSError) as e:
