@@ -180,6 +180,18 @@ TOOLS = {
     "run_shell": (RUN_SHELL_SCHEMA, run_shell),
 }
 
+TOOL_OUTPUT_CAP = 4000
+
+
+def truncate(text: str, max_chars: int = TOOL_OUTPUT_CAP) -> str:
+    text_len = len(text)
+    if text_len <= max_chars:
+        return text
+
+    n = max_chars // 2
+    text = text[:n] + f"\n[... {text_len - 2 * n} characters omitted ...]\n" + text[-n:]
+    return text
+
 
 def execute_tool_call(call: ToolCallMessage, workspace: str, auto_approve: bool = False) -> str:
     name = call["function"]["name"]
@@ -201,7 +213,7 @@ def execute_tool_call(call: ToolCallMessage, workspace: str, auto_approve: bool 
         return f"Error: arguments must be a JSON object, got {type(args).__name__}"
 
     try:
-        return tool_func(**args, **kwargs)
+        return truncate(tool_func(**args, **kwargs))
     except TypeError as e:
         return f"Error: bad arguments for {name}: {e}"
 

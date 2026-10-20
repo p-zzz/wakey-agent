@@ -16,6 +16,7 @@ from wakey_agent.tools import (
     read_file,
     resolve_path,
     run_shell,
+    truncate,
     write_file,
 )
 
@@ -172,6 +173,16 @@ def test_execute_cannot_override_workspace(ws: Path, tmp_path: Path) -> None:
     (tmp_path / "outside.txt").write_text("secret")
     call = make_call("read_file", {"path": "outside.txt", "workspace": str(tmp_path)})
     assert "secret" not in execute_tool_call(call, str(ws))
+
+
+def test_truncate_leaves_short_text_alone() -> None:
+    assert truncate("short", max_chars=10) == "short"
+
+
+def test_truncate_keeps_head_and_tail() -> None:
+    result = truncate("abcdefghij", max_chars=4)
+    assert result.startswith("ab") and result.endswith("ij")
+    assert "6 characters omitted" in result
 
 
 # ---------------------------------------------------------------------------
