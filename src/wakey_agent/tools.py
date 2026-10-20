@@ -82,11 +82,20 @@ READ_FILE_SCHEMA = {
     "function": {
         "name": "read_file",
         "description": "Read a file from the workspace and return its contents. "
+        "For large files, read a part at a time with offset and limit. "
         "Paths are relative to the workspace root.",
         "parameters": {
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "e.g. 'src/main.c'"},
+                "offset": {
+                    "type": "integer",
+                    "description": "Line to start from, 1 = first line. Optional.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of lines to return. Optional; default is to the end of the file.",
+                },
             },
             "required": ["path"],
         },
@@ -94,9 +103,27 @@ READ_FILE_SCHEMA = {
 }
 
 
-def read_file(path: str, workspace: str) -> str:
+def read_file(path: str, workspace: str, offset: int = 1, limit: int | None = None) -> str:
     try:
-        return resolve_path(path, workspace).read_text(encoding="utf-8")
+        text = resolve_path(path, workspace).read_text(encoding="utf-8")
+        lines = text.splitlines(keepends=True)
+        total = len(lines)
+
+        if offset < 1 or (limit is not None and limit < 1):
+            return "Error: offset and limit must be at least 1"
+        if offset > total and total > 0:
+            return f"Error: offset {offset} is past the end of the file ({total} lines)"
+
+        end = total if limit is None else min(total, offset - 1 + limit)
+        result = "".join(lines[offset - 1 : end])
+
+        if offset == 1 and end == total:
+            return result  # the whole file: no note
+        return (
+            result
+            + f"\n[lines {offset}-{end} of {total}; use offset and limit to read other parts]"
+        )
+        return text
     except UnicodeDecodeError:
         return f"Error: {path} is not a UTF-8 text file (binary?)"
     except ValueError as e:
