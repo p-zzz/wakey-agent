@@ -6,6 +6,7 @@ import requests
 
 from wakey_agent.client import (
     AssistantMessage,
+    ChatResult,
     TextMessage,
     WakeyError,
     chat,
@@ -58,9 +59,9 @@ def check_two(url: str, api_key: str, resp, model, stream=False):
     )
 
 
-def check_three(url: str, api_key: str, model: str) -> tuple[AssistantMessage, str | None]:
-    message, finish = chat(url, api_key, model, [QUESTION], [WEATHER_TOOL])
-    return message, finish
+def check_three(url: str, api_key: str, model: str) -> ChatResult:
+    result = chat(url, api_key, model, [QUESTION], [WEATHER_TOOL])
+    return result
 
 
 def is_nonempty_str(x: object) -> bool:
@@ -165,12 +166,12 @@ def run_check_two(url: str, api_key: str, resp, model: str) -> tuple[bool, str]:
 
 def run_check_three(url: str, api_key: str, model: str) -> tuple[bool, str]:
     try:
-        calls, finish_reason = check_three(url, api_key, model)
+        result = check_three(url, api_key, model)
     except (requests.RequestException, WakeyError) as e:
         return False, f"request failed: {e!r}"
     except (ValueError, KeyError, IndexError) as e:
         return False, f"malformed stream: {e!r}"
-    ok, reason = verify_check_three(calls, finish_reason)
+    ok, reason = verify_check_three(result.message, result.finish_reason)
     return ok, reason
 
 

@@ -8,6 +8,9 @@ import requests
 from wakey_agent.client import Message, WakeyError, chat, load_config
 from wakey_agent.tools import TOOLS, execute_tool_call, log_entry, new_log_file
 
+CONTEXT_SIZE = 32768  # must match llama-server's -c setting on the backend
+SHRINK_THRESHOLD = 0.75
+
 SYSTEM_PROMPT: str = (
     "You're an agent working in a workspace directory, "
     "with tools for files and shell commands. "
@@ -44,19 +47,21 @@ def run_agent(
     log_path = new_log_file()
 
     for step in range(1, max_steps + 1):
-        print(f"--- step {step}/{max_steps}")
-
         try:
-            message, _ = chat(url, api_key, model, messages, tools)
-            messages.append(message)
+            result = chat(url, api_key, model, messages, tools)
+            print(
+                f" · ctx {result.prompt_tokens + result.completion_tokens}/{CONTEXT_SIZE} \
+                ({(result.prompt_tokens + result.completion_tokens) / CONTEXT_SIZE})"
+            )
+            messages.append(result.message)
         except (WakeyError, requests.RequestException) as e:
             print(f"Error: {e}", file=sys.stderr)
             return None
 
-        if "tool_calls" not in message:
-            return message["content"]
+        if "tool_calls" not in result.message:
+            return result.message["content"]
 
-        for call in message["tool_calls"]:
+        for call in result.message["tool_calls"]:
             name = call["function"]["name"]
             raw_args = call["function"]["arguments"]
             print(f"→ {name}({raw_args[:80]})")

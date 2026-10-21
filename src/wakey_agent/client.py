@@ -4,6 +4,7 @@ import json
 import os
 import stat
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any, NotRequired, TypedDict
 
 import requests
@@ -54,6 +55,14 @@ class WakeyError(Exception):
     """Wakey or the backend answered with a non-200 status."""
 
 
+@dataclass
+class ChatResult:
+    message: AssistantMessage
+    finish_reason: str | None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+
 # Config
 
 
@@ -91,10 +100,16 @@ def get_payload(
     model: str, messages: list[Message], tools: list[dict[str, Any]], stream: bool
 ) -> dict[str, Any]:
     """Builds payload for request"""
-    return {"model": model, "stream": stream, "messages": messages, "tools": tools}
+    return {
+        "model": model,
+        "stream": stream,
+        "messages": messages,
+        "stream_options": {"include_usage": True},
+        "tools": tools,
+    }
 
 
-def parse_stream(lines: Iterable[str]) -> tuple[AssistantMessage, str | None]:
+def parse_stream(lines: Iterable[str]) -> ChatResult:
     """Turn SSE lines into one assistant message, printing text as it arrives.
 
     Returns the message in the same shape the server uses without streaming,
@@ -103,6 +118,8 @@ def parse_stream(lines: Iterable[str]) -> tuple[AssistantMessage, str | None]:
     calls: dict[int, _PartialToolCall] = {}
     content = ""
     finish_reason: str | None = None
+    prompt_tokens = 0
+    completion_tokens = 0
 
     for line in lines:
         if not line.startswith("data: "):
@@ -111,6 +128,10 @@ def parse_stream(lines: Iterable[str]) -> tuple[AssistantMessage, str | None]:
         if line == "[DONE]":
             break
         chunk = json.loads(line)
+        usage = chunk.get("usage")
+        if usage:
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
         if not chunk.get("choices"):  # usage/timings-only chunks
             continue
         choice = chunk["choices"][0]
@@ -157,7 +178,8 @@ def parse_stream(lines: Iterable[str]) -> tuple[AssistantMessage, str | None]:
     message: AssistantMessage = {"role": "assistant", "content": content}
     if tool_calls:
         message["tool_calls"] = tool_calls
-    return message, finish_reason
+    result = ChatResult(message, finish_reason, prompt_tokens, completion_tokens)
+    return result
 
 
 def chat(
@@ -166,7 +188,7 @@ def chat(
     model: str,
     messages: list[Message],
     tools: list[dict[str, Any]],
-) -> tuple[AssistantMessage, str | None]:
+) -> ChatResult:
     """Send the conversation, stream the reply, return (assistant message, finish reason).
 
     Raises WakeyError on a non-200 answer (e.g. 503 when the PC is down), with
