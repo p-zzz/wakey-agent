@@ -6,10 +6,8 @@ import time
 import requests
 
 from wakey_agent.client import Message, WakeyError, chat, load_config
+from wakey_agent.context import CONTEXT_SIZE, SHRINK_THRESHOLD, shrink_context
 from wakey_agent.tools import TOOLS, execute_tool_call, log_entry, new_log_file
-
-CONTEXT_SIZE = 32768  # must match llama-server's -c setting on the backend
-SHRINK_THRESHOLD = 0.75
 
 SYSTEM_PROMPT: str = (
     "You're an agent working in a workspace directory, "
@@ -49,14 +47,16 @@ def run_agent(
     for step in range(1, max_steps + 1):
         try:
             result = chat(url, api_key, model, messages, tools)
-            print(
-                f" · ctx {result.prompt_tokens + result.completion_tokens}/{CONTEXT_SIZE} \
-                ({(result.prompt_tokens + result.completion_tokens) / CONTEXT_SIZE})"
-            )
-            messages.append(result.message)
         except (WakeyError, requests.RequestException) as e:
             print(f"Error: {e}", file=sys.stderr)
             return None
+
+        used = result.prompt_tokens + result.completion_tokens
+        print(f" · ctx {used}/{CONTEXT_SIZE} ({used / CONTEXT_SIZE:.0%})")
+
+        if used > SHRINK_THRESHOLD * CONTEXT_SIZE:
+            used = shrink_context(messages, used, CONTEXT_SIZE)
+        messages.append(result.message)
 
         if "tool_calls" not in result.message:
             return result.message["content"]
