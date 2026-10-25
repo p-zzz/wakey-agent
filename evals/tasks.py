@@ -1,6 +1,8 @@
+import random
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from wakey_agent.tools import build_argv
@@ -88,4 +90,50 @@ PRIMES = Task(
     check=check_primes,
 )
 
-TASKS = [HELLO, FIX_COMPILE, PRIMES]
+
+def power_eq(wind: float) -> float:
+    p = 0.5 * 1.225 * 7854 * wind**3 * 0.6
+    return min(p, 3.0e6) / 1e6
+
+
+def make_log() -> str:
+    rng = random.Random(42)
+    start = datetime(2026, 10, 1)
+    step = timedelta(seconds=10)
+    lines: list[str] = []
+    for i in range(3000):
+        ts = start + i * step
+        stamp = ts.isoformat()
+
+        if i == 1734:
+            lines.append(f"{stamp} ERROR T{(i % 15) + 1:02d} pitch system fault code=PF-4471")
+            continue
+
+        wind = rng.uniform(3, 15)
+        lines.append(
+            f"{stamp} INFO T{(i % 15) + 1:02d} wind={wind:.1f}m/s power={power_eq(wind):.2f}"
+        )
+
+    return "\n".join(lines) + "\n"
+
+
+def check_log_task(ws: Path) -> tuple[bool, str]:
+    f = ws / "answer.txt"
+    if not f.exists():
+        return False, "answer.txt does not exist"
+    line = f.read_text().strip()
+    if line != "PF-4471":
+        return False, f"unexpected content: {line!r}"
+    return True, ""
+
+
+LOG = Task(
+    name="log",
+    prompt="The file server.log contains exactly one line with ERROR. "
+    "Write only its fault code (for example XX-0000) to answer.txt.",
+    check=check_log_task,
+    files={"server.log": make_log()},
+)
+
+
+TASKS = [HELLO, FIX_COMPILE, PRIMES, LOG]

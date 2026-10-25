@@ -25,6 +25,7 @@ def main():
         "--max-steps", type=int, default=20, help="Maximum amount of model calls (default: 20)"
     )
     parser.add_argument("--model", type=str, default="gemma-4-12b", help="model name to request")
+    parser.add_argument("--task", help="run only the task with this name")
 
     args = parser.parse_args()
 
@@ -34,7 +35,9 @@ def main():
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{time.strftime('%Y-%m-%dT%H-%M-%S')}.jsonl"
 
-    for t in TASKS:
+    tasks = [t for t in TASKS if args.task is None or t.name == args.task]
+
+    for t in tasks:
         for i in range(args.runs):
             with tempfile.TemporaryDirectory() as tmp:
                 ws = Path(tmp)
