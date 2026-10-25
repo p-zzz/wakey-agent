@@ -2,12 +2,22 @@ import argparse
 import os
 import sys
 import time
+from dataclasses import dataclass
 
 import requests
 
 from wakey_agent.client import Message, WakeyError, chat, load_config
 from wakey_agent.context import CONTEXT_SIZE, SHRINK_THRESHOLD, shrink_context
 from wakey_agent.tools import TOOLS, execute_tool_call, log_entry, new_log_file
+
+
+@dataclass
+class RunResult:
+    answer: str | None
+    stop_reason: str
+    steps: int
+    tokens: int
+
 
 SYSTEM_PROMPT: str = (
     "You're an agent working in a workspace directory, "
@@ -35,7 +45,7 @@ def run_agent(
     task: str,
     auto_approve: bool,
     workspace: str,
-):
+) -> RunResult:
     tools = [schema for schema, _ in TOOLS.values()]
     messages: list[Message] = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -44,12 +54,13 @@ def run_agent(
 
     log_path = new_log_file()
 
+    used = 0
     for step in range(1, max_steps + 1):
         try:
             result = chat(url, api_key, model, messages, tools)
         except (WakeyError, requests.RequestException) as e:
             print(f"Error: {e}", file=sys.stderr)
-            return None
+            return RunResult(answer=None, stop_reason="error", steps=step, tokens=used)
 
         used = result.prompt_tokens + result.completion_tokens
         print(f" · ctx {used}/{CONTEXT_SIZE} ({used / CONTEXT_SIZE:.0%})")
@@ -59,15 +70,17 @@ def run_agent(
         messages.append(result.message)
 
         if "tool_calls" not in result.message:
-            return result.message["content"]
+            return RunResult(
+                answer=result.message["content"], stop_reason="done", steps=step, tokens=used
+            )
 
         for call in result.message["tool_calls"]:
             name = call["function"]["name"]
             raw_args = call["function"]["arguments"]
             print(f"→ {name}({raw_args[:80]})")
 
-            result = execute_tool_call(call, workspace, auto_approve)
-            print(preview(result))
+            output = execute_tool_call(call, workspace, auto_approve)
+            print(preview(output))
 
             try:
                 log_entry(
@@ -77,15 +90,16 @@ def run_agent(
                         "step": step,
                         "tool": name,
                         "args": raw_args,
-                        "result": result,
+                        "result": output,
                     },
                 )
             except OSError as e:
-                print(f"Error: {e.strerror}: {log_path}", file=sys.stderr)
+                print(f"Warning: could not write log: {e.strerror} at {log_path}", file=sys.stderr)
 
-            messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
+            messages.append({"role": "tool", "tool_call_id": call["id"], "content": output})
 
     print("Max steps reached", file=sys.stderr)
+    return RunResult(answer=None, stop_reason="max_steps", steps=max_steps, tokens=used)
 
 
 def main():
@@ -107,7 +121,7 @@ def main():
 
     url, api_key = load_config()
 
-    run_agent(
+    result = run_agent(
         url,
         api_key,
         args.max_steps,
@@ -116,6 +130,8 @@ def main():
         args.yes,
         os.path.expanduser(args.workspace),
     )
+
+    sys.exit(0 if result.stop_reason == "done" else 1)
 
 
 if __name__ == "__main__":
