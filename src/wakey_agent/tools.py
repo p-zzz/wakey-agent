@@ -3,10 +3,13 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from wakey_agent.client import ToolCallMessage
+
+type Approver = Callable[[str], bool]  # takes the command, returns approved or not
 
 
 # fmt: off
@@ -181,11 +184,17 @@ RUN_SHELL_SCHEMA = {
 }
 
 
-def run_shell(command: str, workspace: str, auto_approve=False) -> str:
-    if not auto_approve:
-        ans = input(f"Run '{command}'? [y/N]: ")
-        if ans.lower() not in ("y", "yes"):
-            return "User declined to run this command"
+def ask_terminal(command: str) -> bool:
+    return input(f"Run '{command}'? [y/N]: ").lower() in ("y", "yes")
+
+
+def always_approve(command: str) -> bool:
+    return True
+
+
+def run_shell(command: str, workspace: str, approve: Approver = ask_terminal) -> str:
+    if not approve(command):
+        return "User declined to run this command"
 
     try:
         res = subprocess.run(
@@ -220,13 +229,15 @@ def truncate(text: str, max_chars: int = TOOL_OUTPUT_CAP) -> str:
     return text
 
 
-def execute_tool_call(call: ToolCallMessage, workspace: str, auto_approve: bool = False) -> str:
+def execute_tool_call(
+    call: ToolCallMessage, workspace: str, approve: Approver = ask_terminal
+) -> str:
     name = call["function"]["name"]
     raw_args = call["function"]["arguments"]
-    kwargs: dict[str, str | bool] = {"workspace": workspace}
+    kwargs: dict[str, str | Approver] = {"workspace": workspace}
 
     if name == "run_shell":
-        kwargs["auto_approve"] = auto_approve
+        kwargs["approve"] = approve
 
     if name not in TOOLS:
         return f"Error: unknown tool {name!r}"

@@ -160,7 +160,7 @@ def test_execute_valid_call(ws: Path) -> None:
         make_call("read_file", {"path": "hello.c", "workspace": "/"}),  # tries to set workspace
         make_call("", {}),  # empty name (stream sent no name)
         make_call(
-            "run_shell", {"command": "true", "auto_approve": True}
+            "run_shell", {"command": "true", "approve": True}
         ),  # model tries to skip the prompt
     ],
 )

@@ -10,7 +10,15 @@ import requests
 
 from wakey_agent.client import Message, WakeyError, chat, load_config
 from wakey_agent.context import CONTEXT_SIZE, SHRINK_THRESHOLD, shrink_context
-from wakey_agent.tools import TOOLS, execute_tool_call, log_entry, new_log_file
+from wakey_agent.tools import (
+    TOOLS,
+    Approver,
+    always_approve,
+    ask_terminal,
+    execute_tool_call,
+    log_entry,
+    new_log_file,
+)
 
 type Event = dict[str, Any]
 type Emit = Callable[[Event], None]
@@ -74,7 +82,7 @@ def run_agent(
     max_steps: int,
     model: str,
     task: str,
-    auto_approve: bool,
+    approve: Approver,
     workspace: str,
     emit: Emit,
 ) -> RunResult:
@@ -112,7 +120,7 @@ def run_agent(
             raw_args = call["function"]["arguments"]
             emit({"type": "tool_call", "name": name, "args": raw_args})
 
-            output = execute_tool_call(call, workspace, auto_approve)
+            output = execute_tool_call(call, workspace, approve)
             emit({"type": "tool_result", "output": output})
 
             try:
@@ -160,7 +168,7 @@ def main():
         args.max_steps,
         args.model,
         args.task,
-        args.yes,
+        always_approve if args.yes else ask_terminal,
         os.path.expanduser(args.workspace),
         emit=print_event,
     )
