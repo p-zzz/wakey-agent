@@ -1,9 +1,10 @@
 import argparse
-import os
+import json
 import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -14,7 +15,6 @@ from wakey_agent.tools import (
     TOOLS,
     Approver,
     always_approve,
-    ask_terminal,
     execute_tool_call,
     log_entry,
     new_log_file,
@@ -40,6 +40,135 @@ SYSTEM_PROMPT: str = (
     "Always check your work, for example, compile and run code you write. "
     "Always finish with writing a short summary of what you've done."
 )
+
+
+class Session:
+    def __init__(
+        self,
+        url: str,
+        api_key: str,
+        model: str,
+        workspace: str,
+        approve: Approver,
+        emit: Emit,
+        max_steps: int = 20,
+    ) -> None:
+        self.url = url
+        self.api_key = api_key
+        self.model = model
+        self.workspace = workspace
+        self.approve = approve
+        self.emit = emit
+        self.max_steps = max_steps
+        self.messages: list[Message] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.log_path = new_log_file()
+        self.used = 0
+        self.tools = [schema for schema, _ in TOOLS.values()]
+
+    def send(self, text: str) -> RunResult:
+        self.messages.append({"role": "user", "content": text})
+        for step in range(1, self.max_steps + 1):
+            self.emit(
+                {
+                    "type": "step",
+                    "step": step,
+                    "max": self.max_steps,
+                    "used": self.used,
+                    "limit": CONTEXT_SIZE,
+                }
+            )
+            try:
+                result = chat(self.url, self.api_key, self.model, self.messages, self.tools)
+            except (WakeyError, requests.RequestException) as e:
+                self.emit({"type": "error", "message": str(e)})
+                self.emit({"type": "done", "reason": "error", "steps": step, "tokens": self.used})
+                return RunResult(answer=None, stop_reason="error", steps=step, tokens=self.used)
+
+            self.used = result.prompt_tokens + result.completion_tokens
+            self.emit({"type": "usage", "used": self.used, "limit": CONTEXT_SIZE})
+
+            if self.used > SHRINK_THRESHOLD * CONTEXT_SIZE:
+                self.used = shrink_context(self.messages, self.used, CONTEXT_SIZE)
+            self.messages.append(result.message)
+
+            if "tool_calls" not in result.message:
+                self.emit({"type": "done", "reason": "done", "steps": step, "tokens": self.used})
+                return RunResult(
+                    answer=result.message["content"],
+                    stop_reason="done",
+                    steps=step,
+                    tokens=self.used,
+                )
+
+            for call in result.message["tool_calls"]:
+                name = call["function"]["name"]
+                raw_args = call["function"]["arguments"]
+                self.emit({"type": "tool_call", "name": name, "args": raw_args})
+
+                output = execute_tool_call(call, self.workspace, self.approve)
+                self.emit({"type": "tool_result", "output": output})
+
+                try:
+                    log_entry(
+                        self.log_path,
+                        {
+                            "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "step": step,
+                            "tool": name,
+                            "args": raw_args,
+                            "result": output,
+                        },
+                    )
+                except OSError as e:
+                    self.emit({"type": "warning", "message": f"could not write log: {e.strerror}"})
+
+                self.messages.append(
+                    {"role": "tool", "tool_call_id": call["id"], "content": output}
+                )
+        self.emit(
+            {"type": "done", "reason": "max_steps", "steps": self.max_steps, "tokens": self.used}
+        )
+        return RunResult(
+            answer=None, stop_reason="max_steps", steps=self.max_steps, tokens=self.used
+        )
+
+
+class ProtocolApprover:
+    """Asks the frontend over stdin/stdout whether to run a command."""
+
+    def __init__(self) -> None:
+        self.next_id = 1
+
+    def __call__(self, command: str) -> bool:
+        request_id = self.next_id
+        self.next_id += 1
+        emit_json({"type": "approve", "id": request_id, "command": command})
+
+        while True:
+            line = sys.stdin.readline()
+            if not line:
+                return False
+            try:
+                line_json = json.loads(line)
+            except json.JSONDecodeError:
+                emit_json({"type": "warning", "message": "Invalid JSON"})
+                continue
+            if not isinstance(line_json, dict):
+                emit_json({"type": "warning", "message": "ignored non-object message"})
+                continue
+            if line_json.get("type") == "approval" and line_json.get("id") == request_id:
+                return line_json.get("ok") is True
+            emit_json(
+                {
+                    "type": "warning",
+                    "message": f"ignored message while waiting for approval {request_id}: {line.strip()[:80]}",
+                }
+            )
+
+
+def emit_json(event: Event) -> None:
+    sys.stdout.write(json.dumps(event) + "\n")
+    sys.stdout.flush()
 
 
 def print_event(event: Event) -> None:
@@ -86,61 +215,8 @@ def run_agent(
     workspace: str,
     emit: Emit,
 ) -> RunResult:
-    tools = [schema for schema, _ in TOOLS.values()]
-    messages: list[Message] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": task},
-    ]
-
-    log_path = new_log_file()
-
-    used = 0
-    for step in range(1, max_steps + 1):
-        emit({"type": "step", "step": step, "max": max_steps, "used": used, "limit": CONTEXT_SIZE})
-        try:
-            result = chat(url, api_key, model, messages, tools)
-        except (WakeyError, requests.RequestException) as e:
-            emit({"type": "error", "message": str(e)})
-            return RunResult(answer=None, stop_reason="error", steps=step, tokens=used)
-
-        used = result.prompt_tokens + result.completion_tokens
-        emit({"type": "usage", "used": used, "limit": CONTEXT_SIZE})
-
-        if used > SHRINK_THRESHOLD * CONTEXT_SIZE:
-            used = shrink_context(messages, used, CONTEXT_SIZE)
-        messages.append(result.message)
-
-        if "tool_calls" not in result.message:
-            return RunResult(
-                answer=result.message["content"], stop_reason="done", steps=step, tokens=used
-            )
-
-        for call in result.message["tool_calls"]:
-            name = call["function"]["name"]
-            raw_args = call["function"]["arguments"]
-            emit({"type": "tool_call", "name": name, "args": raw_args})
-
-            output = execute_tool_call(call, workspace, approve)
-            emit({"type": "tool_result", "output": output})
-
-            try:
-                log_entry(
-                    log_path,
-                    {
-                        "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                        "step": step,
-                        "tool": name,
-                        "args": raw_args,
-                        "result": output,
-                    },
-                )
-            except OSError as e:
-                emit({"type": "warning", "message": f"could not write log: {e.strerror}"})
-
-            messages.append({"role": "tool", "tool_call_id": call["id"], "content": output})
-
-    emit({"type": "done", "reason": "max_steps", "steps": max_steps, "tokens": used})
-    return RunResult(answer=None, stop_reason="max_steps", steps=max_steps, tokens=used)
+    session = Session(url, api_key, model, workspace, approve, emit, max_steps)
+    return session.send(task)
 
 
 def main():
@@ -158,22 +234,38 @@ def main():
     parser.add_argument(
         "--workspace", type=str, default="~/throwaway", help="User defined workspace folder"
     )
+    parser.add_argument("--chat", action="store_true", help="just to test things out")
+    parser.add_argument(
+        "--serve", action="store_true", help="Interface with wakeyctl in agent mode"
+    )
     args = parser.parse_args()
 
     url, api_key = load_config()
 
-    result = run_agent(
+    ws = Path(args.workspace).expanduser().resolve() if args.workspace else Path.cwd()
+
+    if ws in (Path("/"), Path.home(), Path.home().parent):
+        sys.exit(f"Refusing to use {ws} as the workspace: it would expose too much to the agent.")
+    if not ws.is_dir():
+        sys.exit(f"Workspace {ws} is not a directory.")
+
+    approve = always_approve if args.yes else ProtocolApprover()
+    session = Session(
         url,
         api_key,
-        args.max_steps,
         args.model,
-        args.task,
-        always_approve if args.yes else ask_terminal,
-        os.path.expanduser(args.workspace),
-        emit=print_event,
+        str(ws),
+        approve=approve,
+        emit=emit_json,
+        max_steps=args.max_steps,
     )
 
-    sys.exit(0 if result.stop_reason == "done" else 1)
+    emit_json({"type": "ready", "model": args.model, "workspace": str(ws)})
+
+    while line := sys.stdin.readline():
+        msg = json.loads(line)
+        if msg["type"] == "user":
+            session.send(msg["content"])
 
 
 if __name__ == "__main__":
