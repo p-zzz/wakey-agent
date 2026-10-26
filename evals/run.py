@@ -54,6 +54,7 @@ def main():
                         task=t.prompt,
                         auto_approve=True,
                         workspace=tmp,
+                        emit=lambda e: None,
                     )
                 except Exception as e:
                     log_to_file(

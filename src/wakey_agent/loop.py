@@ -2,13 +2,18 @@ import argparse
 import os
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import requests
 
 from wakey_agent.client import Message, WakeyError, chat, load_config
 from wakey_agent.context import CONTEXT_SIZE, SHRINK_THRESHOLD, shrink_context
 from wakey_agent.tools import TOOLS, execute_tool_call, log_entry, new_log_file
+
+type Event = dict[str, Any]
+type Emit = Callable[[Event], None]
 
 
 @dataclass
@@ -29,6 +34,32 @@ SYSTEM_PROMPT: str = (
 )
 
 
+def print_event(event: Event) -> None:
+    match event["type"]:
+        case "text":
+            print(event["delta"], end="", flush=True)
+        case "tool_call":
+            print(f"→ {event['name']}({event['args'][:80]})")
+        case "tool_result":
+            print(preview(event["output"]))
+        case "error":
+            print(f"Error: {event['message']}", file=sys.stderr)
+        case "warning":
+            print(f"Warning: {event['message']}", file=sys.stderr)
+        case "step":
+            line = f"--- step {event['step']}/{event['max']}"
+            if event["used"]:
+                line += f" · ctx {event['used']}/{event['limit']} ({event['used'] / event['limit']:.0%})"
+            print(line)
+        case "done":
+            if event["reason"] == "max_steps":
+                print("Max steps reached", file=sys.stderr)
+        case "text_end":
+            print()
+        case _:
+            pass
+
+
 def preview(text: str, max_lines: int = 3) -> str:
     lines = text.splitlines()
     shown = "\n".join(lines[:max_lines])
@@ -45,6 +76,7 @@ def run_agent(
     task: str,
     auto_approve: bool,
     workspace: str,
+    emit: Emit,
 ) -> RunResult:
     tools = [schema for schema, _ in TOOLS.values()]
     messages: list[Message] = [
@@ -56,14 +88,15 @@ def run_agent(
 
     used = 0
     for step in range(1, max_steps + 1):
+        emit({"type": "step", "step": step, "max": max_steps, "used": used, "limit": CONTEXT_SIZE})
         try:
             result = chat(url, api_key, model, messages, tools)
         except (WakeyError, requests.RequestException) as e:
-            print(f"Error: {e}", file=sys.stderr)
+            emit({"type": "error", "message": str(e)})
             return RunResult(answer=None, stop_reason="error", steps=step, tokens=used)
 
         used = result.prompt_tokens + result.completion_tokens
-        print(f" · ctx {used}/{CONTEXT_SIZE} ({used / CONTEXT_SIZE:.0%})")
+        emit({"type": "usage", "used": used, "limit": CONTEXT_SIZE})
 
         if used > SHRINK_THRESHOLD * CONTEXT_SIZE:
             used = shrink_context(messages, used, CONTEXT_SIZE)
@@ -77,10 +110,10 @@ def run_agent(
         for call in result.message["tool_calls"]:
             name = call["function"]["name"]
             raw_args = call["function"]["arguments"]
-            print(f"→ {name}({raw_args[:80]})")
+            emit({"type": "tool_call", "name": name, "args": raw_args})
 
             output = execute_tool_call(call, workspace, auto_approve)
-            print(preview(output))
+            emit({"type": "tool_result", "output": output})
 
             try:
                 log_entry(
@@ -94,11 +127,11 @@ def run_agent(
                     },
                 )
             except OSError as e:
-                print(f"Warning: could not write log: {e.strerror} at {log_path}", file=sys.stderr)
+                emit({"type": "warning", "message": f"could not write log: {e.strerror}"})
 
             messages.append({"role": "tool", "tool_call_id": call["id"], "content": output})
 
-    print("Max steps reached", file=sys.stderr)
+    emit({"type": "done", "reason": "max_steps", "steps": max_steps, "tokens": used})
     return RunResult(answer=None, stop_reason="max_steps", steps=max_steps, tokens=used)
 
 
@@ -129,6 +162,7 @@ def main():
         args.task,
         args.yes,
         os.path.expanduser(args.workspace),
+        emit=print_event,
     )
 
     sys.exit(0 if result.stop_reason == "done" else 1)
