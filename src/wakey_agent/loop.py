@@ -52,6 +52,7 @@ class Session:
         approve: Approver,
         emit: Emit,
         max_steps: int = 20,
+        context_size: int = CONTEXT_SIZE,
     ) -> None:
         self.url = url
         self.api_key = api_key
@@ -60,6 +61,7 @@ class Session:
         self.approve = approve
         self.emit = emit
         self.max_steps = max_steps
+        self.context_size = context_size
         self.messages: list[Message] = [{"role": "system", "content": SYSTEM_PROMPT}]
         self.log_path = new_log_file()
         self.used = 0
@@ -74,7 +76,7 @@ class Session:
                     "step": step,
                     "max": self.max_steps,
                     "used": self.used,
-                    "limit": CONTEXT_SIZE,
+                    "limit": self.context_size,
                 }
             )
             try:
@@ -85,10 +87,10 @@ class Session:
                 return RunResult(answer=None, stop_reason="error", steps=step, tokens=self.used)
 
             self.used = result.prompt_tokens + result.completion_tokens
-            self.emit({"type": "usage", "used": self.used, "limit": CONTEXT_SIZE})
+            self.emit({"type": "usage", "used": self.used, "limit": self.context_size})
 
-            if self.used > SHRINK_THRESHOLD * CONTEXT_SIZE:
-                self.used = shrink_context(self.messages, self.used, CONTEXT_SIZE)
+            if self.used > SHRINK_THRESHOLD * self.context_size:
+                self.used = shrink_context(self.messages, self.used, self.context_size)
             self.messages.append(result.message)
 
             if "tool_calls" not in result.message:
@@ -237,6 +239,9 @@ def main():
     parser.add_argument("--chat", action="store_true", help="just to test things out")
     parser.add_argument(
         "--serve", action="store_true", help="Interface with wakeyctl in agent mode"
+    )
+    parser.add_argument(
+        "--context-size", type=int, default=CONTEXT_SIZE, help="maximum context size in tokens"
     )
     args = parser.parse_args()
 
