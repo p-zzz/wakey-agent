@@ -9,6 +9,7 @@ from tasks import TASKS
 
 from wakey_agent.client import load_config
 from wakey_agent.loop import run_agent
+from wakey_agent.tools import always_approve
 
 
 def log_to_file(log_path: Path, entry: dict[str, Any]):
@@ -52,7 +53,7 @@ def main():
                         max_steps=args.max_steps,
                         model=args.model,
                         task=t.prompt,
-                        auto_approve=True,
+                        approve=always_approve,
                         workspace=tmp,
                         emit=lambda e: None,
                     )
