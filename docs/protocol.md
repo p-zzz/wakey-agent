@@ -15,6 +15,8 @@ How `wakeyctl agent` (frontend) talks to `wakey-agent --serve` (backend).
 2. The backend sends `ready`.
 3. Each `user` message starts a **turn**. A turn ends with exactly one `done`.
 4. The backend exits when its stdin is closed.
+5. To cancel a running turn, the frontend sends SIGINT to the backend process. The backend
+   discards the whole turn from the conversation and ends it with `done`, reason `cancelled`.
 
 A typical turn:
 
@@ -78,7 +80,8 @@ A typical turn:
 
 `{"type": "error", "message": "HTTP 503: {\"error\":\"backend 'pc' is not running; wake it first\"}"}`
 
-**`done`**: the turn is over. `reason` is `done` (the model answered), `max_steps` (it ran out of steps) or `error`.
+**`done`**: the turn is over. `reason` is `done` (the model answered), `max_steps` (it ran out
+of steps), `error`, or `cancelled` (the user cancelled the turn).
 
 `{"type": "done", "reason": "done", "steps": 4, "tokens": 1467}`
 
