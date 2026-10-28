@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 import time
 from collections.abc import Callable
@@ -169,8 +170,15 @@ class ProtocolApprover:
 
 
 def emit_json(event: Event) -> None:
-    sys.stdout.write(json.dumps(event) + "\n")
-    sys.stdout.flush()
+    try:
+        sys.stdout.write(json.dumps(event, default=str) + "\n")
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # The frontend is gone. Point stdout at /dev/null so Python's final flush
+        # at exit doesn't fail again, then end quietly.
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        sys.exit(0)
 
 
 def print_event(event: Event) -> None:
@@ -233,9 +241,7 @@ def main():
         action="store_true",
         help="run shell commands without asking for confirmation",
     )
-    parser.add_argument(
-        "--workspace", type=str, default="~/throwaway", help="User defined workspace folder"
-    )
+    parser.add_argument("--workspace", type=str, default=None, help="User defined workspace folder")
     parser.add_argument("--chat", action="store_true", help="just to test things out")
     parser.add_argument(
         "--serve", action="store_true", help="Interface with wakeyctl in agent mode"
@@ -249,10 +255,16 @@ def main():
 
     ws = Path(args.workspace).expanduser().resolve() if args.workspace else Path.cwd()
 
+    emit = emit_json if args.serve else print_event
+
+    print(f"--- wakey-agent started {time.strftime('%Y-%m-%d %H:%M:%S')} in {ws}", file=sys.stderr)
+
     if ws in (Path("/"), Path.home(), Path.home().parent):
-        sys.exit(f"Refusing to use {ws} as the workspace: it would expose too much to the agent.")
+        emit({"type": "error", "message": f"refusing to use {ws} as the workspace"})
+        sys.exit(1)
     if not ws.is_dir():
-        sys.exit(f"Workspace {ws} is not a directory.")
+        emit({"type": "error", "message": f"Workspace {ws} is not a directory."})
+        sys.exit(1)
 
     approve = always_approve if args.yes else ProtocolApprover()
     session = Session(
