@@ -1,10 +1,10 @@
 [project]
 name = "wakey-agent"
 version = "0.1.0"
-description = "Add your description here"
+description = "Coding agent for Gemma 4 12B, served by Wakey"
 readme = "README.md"
 authors = [
-    { name = "p-zzz", email = "pablozahn@protonmail.com" }
+    { name = "p-zzz" }
 ]
 requires-python = ">=3.12"
 dependencies = [
