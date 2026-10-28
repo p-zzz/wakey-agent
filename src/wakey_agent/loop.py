@@ -244,14 +244,14 @@ def main():
         "--max-steps", type=int, default=20, help="Maximum amount of model calls (default: 20)"
     )
     parser.add_argument("--model", type=str, default="gemma-4-12b", help="model name to request")
-    parser.add_argument("--task", type=str, default="", help="User defined task for the model")
+    # parser.add_argument("--task", type=str, default="", help="User defined task for the model")
     parser.add_argument(
         "--yes",
         action="store_true",
         help="run shell commands without asking for confirmation",
     )
     parser.add_argument("--workspace", type=str, default=None, help="User defined workspace folder")
-    parser.add_argument("--chat", action="store_true", help="just to test things out")
+    # parser.add_argument("--chat", action="store_true", help="just to test things out")
     parser.add_argument(
         "--serve", action="store_true", help="Interface with wakeyctl in agent mode"
     )
