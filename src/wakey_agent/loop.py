@@ -68,7 +68,7 @@ class Session:
         self.used = 0
         self.tools = [schema for schema, _ in TOOLS.values()]
 
-    def send(self, text: str) -> RunResult:
+    def _run_turn(self, text: str) -> RunResult:
         self.messages.append({"role": "user", "content": text})
         for step in range(1, self.max_steps + 1):
             self.emit(
@@ -134,6 +134,15 @@ class Session:
         return RunResult(
             answer=None, stop_reason="max_steps", steps=self.max_steps, tokens=self.used
         )
+
+    def send(self, text: str) -> RunResult:
+        start = len(self.messages)
+        try:
+            return self._run_turn(text)
+        except KeyboardInterrupt:
+            del self.messages[start:]
+            self.emit({"type": "done", "reason": "cancelled", "steps": 0, "tokens": self.used})
+            return RunResult(answer=None, stop_reason="cancelled", steps=0, tokens=self.used)
 
 
 class ProtocolApprover:
