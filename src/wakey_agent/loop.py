@@ -3,14 +3,12 @@ import json
 import os
 import sys
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import requests
 
-from wakey_agent.client import Message, WakeyError, chat, load_config
+from wakey_agent.client import Emit, Event, Message, WakeyError, chat, load_config
 from wakey_agent.context import CONTEXT_SIZE, SHRINK_THRESHOLD, shrink_context
 from wakey_agent.tools import (
     TOOLS,
@@ -20,9 +18,6 @@ from wakey_agent.tools import (
     log_entry,
     new_log_file,
 )
-
-type Event = dict[str, Any]
-type Emit = Callable[[Event], None]
 
 
 @dataclass
@@ -81,7 +76,9 @@ class Session:
                 }
             )
             try:
-                result = chat(self.url, self.api_key, self.model, self.messages, self.tools)
+                result = chat(
+                    self.url, self.api_key, self.model, self.messages, self.tools, self.emit
+                )
             except (WakeyError, requests.RequestException) as e:
                 self.emit({"type": "error", "message": str(e)})
                 self.emit({"type": "done", "reason": "error", "steps": step, "tokens": self.used})

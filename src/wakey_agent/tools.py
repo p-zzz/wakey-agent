@@ -234,7 +234,7 @@ def execute_tool_call(
 ) -> str:
     name = call["function"]["name"]
     raw_args = call["function"]["arguments"]
-    kwargs: dict[str, str | Approver] = {"workspace": workspace}
+    kwargs: dict[str, Any] = {"workspace": workspace}
 
     if name == "run_shell":
         kwargs["approve"] = approve

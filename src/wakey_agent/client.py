@@ -3,7 +3,7 @@
 import json
 import os
 import stat
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, NotRequired, TypedDict
 
@@ -63,6 +63,10 @@ class ChatResult:
     completion_tokens: int = 0
 
 
+type Event = dict[str, Any]
+type Emit = Callable[[Event], None]
+
+
 # Config
 
 
@@ -109,7 +113,7 @@ def get_payload(
     }
 
 
-def parse_stream(lines: Iterable[str]) -> ChatResult:
+def parse_stream(lines: Iterable[str], emit: Emit) -> ChatResult:
     """Turn SSE lines into one assistant message, printing text as it arrives.
 
     Returns the message in the same shape the server uses without streaming,
@@ -143,7 +147,7 @@ def parse_stream(lines: Iterable[str]) -> ChatResult:
 
         text = delta.get("content")
         if text:
-            print(text, end="", flush=True)
+            emit({"type": "text", "delta": text})
             content += text
 
         for fragment in delta.get("tool_calls", []):
@@ -160,7 +164,7 @@ def parse_stream(lines: Iterable[str]) -> ChatResult:
                 entry["arguments"] += func["arguments"]
 
     if content:
-        print()  # end the streamed text with a newline
+        emit({"type": "text_end"})
 
     # Convert the accumulator into the wire format, in index order. A missing
     # id gets a fallback; a missing name becomes "" so the loop reports it to
@@ -188,6 +192,7 @@ def chat(
     model: str,
     messages: list[Message],
     tools: list[dict[str, Any]],
+    emit: Emit,
 ) -> ChatResult:
     """Send the conversation, stream the reply, return (assistant message, finish reason).
 
@@ -205,4 +210,4 @@ def chat(
         if r.status_code != 200:
             raise WakeyError(f"HTTP {r.status_code}: {r.text.strip()}")
         lines = (raw.decode("utf-8") for raw in r.iter_lines())
-        return parse_stream(lines)
+        return parse_stream(lines, emit)
